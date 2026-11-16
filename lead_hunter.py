@@ -14,7 +14,8 @@ DIRECTORY_BLACKLIST = {
     "justdial.com", "practo.com", "sulekha.com", "indiamart.com", "lybrate.com",
     "facebook.com", "instagram.com", "linkedin.com", "youtube.com", "wikipedia.org",
     "yelp.com", "tripadvisor.com", "tripadvisor.in", "google.com", "whatclinic.com",
-    "zomato.com", "swiggy.com", "credihealth.com", "apollo247.com", "threebestrated.in"
+    "zomato.com", "swiggy.com", "credihealth.com", "apollo247.com", "threebestrated.in",
+    "jdmagicbox.com", "magicbricks.com", "99acres.com", "housing.com"
 }
 
 CHAT_WIDGET_SCRIPTS = [
@@ -31,7 +32,6 @@ DAILY_EMAIL_LIMIT = 5
 
 
 def init_outreach_table():
-    """Creates an SQLite table to track daily sent emails and prevent double-pitching."""
     central_core.init_databases()
     conn = sqlite3.connect(central_core.SUPPORT_DB)
     cur = conn.cursor()
@@ -52,7 +52,6 @@ def init_outreach_table():
 
 
 def get_today_sent_count():
-    """Returns how many outreach emails have been sent today (UTC)."""
     init_outreach_table()
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     conn = sqlite3.connect(central_core.SUPPORT_DB)
@@ -64,7 +63,6 @@ def get_today_sent_count():
 
 
 def is_already_contacted(target_email):
-    """Checks if we have ever sent an email to this address before."""
     init_outreach_table()
     conn = sqlite3.connect(central_core.SUPPORT_DB)
     cur = conn.cursor()
@@ -74,39 +72,45 @@ def is_already_contacted(target_email):
     return exists
 
 
-def get_business_urls(category, city, max_results=10):
-    """Finds standalone local business websites via search."""
+def get_business_urls(category, city):
+    """Pulls all possible URLs from multiple deep queries without early limits."""
     candidates = []
     seen_domains = set()
+    
+    # 3 distinct queries to maximize discovery
     queries = [
-        f'{category} in {city} "contact" -justdial -practo -sulekha',
-        f'best {category} {city} official website'
+        f'{category} in {city} "contact" -justdial -practo',
+        f'best {category} {city} official website',
+        f'{category} {city} email address'
     ]
+    
     for q in queries:
         try:
             url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
             resp = requests.get(url, headers=HEADERS, timeout=10)
             soup = BeautifulSoup(resp.text, "html.parser")
+            
             for a in soup.find_all("a", class_="result__a", href=True):
                 raw_href = a["href"]
                 target = urllib.parse.parse_qs(urllib.parse.urlparse(raw_href).query).get("uddg", [raw_href])[0]
+                
                 if not target.startswith("http"):
                     continue
+                    
                 netloc = urllib.parse.urlparse(target).netloc.lower().replace("www.", "")
                 if not netloc or any(b in netloc for b in DIRECTORY_BLACKLIST):
                     continue
+                    
                 if netloc not in seen_domains:
                     seen_domains.add(netloc)
                     candidates.append(f"https://{netloc}")
-                if len(candidates) >= max_results:
-                    return candidates
         except Exception:
             continue
+            
     return candidates
 
 
 def extract_emails_from_site(base_url, soup, html_text):
-    """Extracts public emails from homepage and /contact page."""
     ignored_ext = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js")
     raw_emails = set(re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", html_text))
 
@@ -123,7 +127,7 @@ def extract_emails_from_site(base_url, soup, html_text):
         return list(dict.fromkeys(valid))[:2]
 
     for a in soup.find_all("a", href=True):
-        if "contact" in a["href"].lower():
+        if "contact" in a["href"].lower() or "about" in a["href"].lower():
             try:
                 contact_url = urllib.parse.urljoin(base_url, a["href"])
                 c_resp = requests.get(contact_url, headers=HEADERS, timeout=6)
@@ -141,14 +145,15 @@ def extract_emails_from_site(base_url, soup, html_text):
 
 
 def hunt_support_leads(category, city, max_scan=5):
-    """Finds businesses without a chat widget, extracts emails, and writes a pitch."""
     init_outreach_table()
-    urls = get_business_urls(category, city, max_results=max_scan * 3)
+    urls = get_business_urls(category, city)
     hot_leads = []
 
     for url in urls:
+        # Stop immediately once we have the requested number of hot leads
         if len(hot_leads) >= max_scan:
             break
+            
         try:
             resp = requests.get(url, headers=HEADERS, timeout=8)
             html_lower = resp.text.lower()
@@ -199,7 +204,6 @@ def hunt_support_leads(category, city, max_scan=5):
 
 
 def send_automated_email(business_name, url, target_email, subject, body):
-    """Sends an email via Gmail SMTP while enforcing a strict 5-email daily cap."""
     init_outreach_table()
     target_email = target_email.lower().strip()
 
@@ -227,7 +231,6 @@ def send_automated_email(business_name, url, target_email, subject, body):
         server.send_message(msg)
         server.quit()
 
-        # Log to SQLite so we enforce the 5/day limit and never double-email
         now_utc = datetime.now(timezone.utc)
         conn = sqlite3.connect(central_core.SUPPORT_DB)
         cur = conn.cursor()
