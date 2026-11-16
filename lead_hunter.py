@@ -1,6 +1,5 @@
 import os
 import re
-import base64
 import sqlite3
 import smtplib
 import urllib.parse
@@ -10,15 +9,7 @@ from email.mime.multipart import MIMEMultipart
 import requests
 from bs4 import BeautifulSoup
 import central_core
-
-DIRECTORY_BLACKLIST = {
-    "justdial.com", "practo.com", "sulekha.com", "indiamart.com", "lybrate.com",
-    "facebook.com", "instagram.com", "linkedin.com", "youtube.com", "wikipedia.org",
-    "yelp.com", "tripadvisor.com", "tripadvisor.in", "google.com", "whatclinic.com",
-    "zomato.com", "swiggy.com", "credihealth.com", "apollo247.com", "threebestrated.in",
-    "jdmagicbox.com", "magicbricks.com", "99acres.com", "housing.com", "bing.com",
-    "duckduckgo.com", "microsoft.com", "cloudflare.com", "w3.org", "schema.org"
-}
+import discovery_engine
 
 CHAT_WIDGET_SCRIPTS = [
     "embed.tawk.to", "static.zdassets.com", "widget.intercom.io",
@@ -26,14 +17,12 @@ CHAT_WIDGET_SCRIPTS = [
 ]
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 }
 
 DEMO_URL = "https://zenith-support-agent-u6xxkp7actgzbcuubdbaiz.streamlit.app"
 SENDER_EMAIL = "zenith.ai.gowtham@gmail.com"
 DAILY_EMAIL_LIMIT = 5
-
 
 def init_outreach_table():
     central_core.init_databases()
@@ -54,7 +43,6 @@ def init_outreach_table():
     conn.commit()
     conn.close()
 
-
 def get_today_sent_count():
     init_outreach_table()
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -65,7 +53,6 @@ def get_today_sent_count():
     conn.close()
     return count
 
-
 def is_already_contacted(target_email):
     init_outreach_table()
     conn = sqlite3.connect(central_core.SUPPORT_DB)
@@ -75,65 +62,9 @@ def is_already_contacted(target_email):
     conn.close()
     return exists
 
-
-def is_valid_business_url(url):
-    if not url or not url.startswith("http"):
-        return False
-    netloc = urllib.parse.urlparse(url).netloc.lower().replace("www.", "")
-    if not netloc or "." not in netloc:
-        return False
-    return not any(b in netloc for b in DIRECTORY_BLACKLIST)
-
-
-def decode_bing_url(href):
-    if "bing.com/ck/a" in href and "u=" in href:
-        try:
-            u_param = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("u", [""])[0]
-            if u_param.startswith("a1"):
-                b64 = u_param[2:]
-                b64 += "=" * ((4 - len(b64) % 4) % 4)
-                return base64.urlsafe_b64decode(b64).decode("utf-8", errors="ignore")
-        except Exception:
-            pass
-    return href
-
-
-def get_business_urls(category, city):
-    candidates = []
-    seen_domains = set()
-
-    def add_url(raw_url):
-        if not is_valid_business_url(raw_url):
-            return
-        netloc = urllib.parse.urlparse(raw_url).netloc.lower().replace("www.", "")
-        if netloc not in seen_domains:
-            seen_domains.add(netloc)
-            candidates.append(raw_url)
-
-    queries = [
-        f'{category} in {city} contact email -justdial -practo -sulekha',
-        f'{category} {city} "contact us" "@" -justdial -practo',
-        f'best {category} in {city} official website'
-    ]
-
-    for q in queries:
-        try:
-            b_url = f"https://www.bing.com/search?q={urllib.parse.quote(q)}&count=30"
-            resp = requests.get(b_url, headers=HEADERS, timeout=10)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                decoded = decode_bing_url(a["href"])
-                if decoded.startswith("http") and "bing.com" not in decoded and "microsoft.com" not in decoded:
-                    add_url(decoded)
-        except Exception:
-            continue
-
-    return candidates
-
-
 def extract_emails_from_site(target_url, soup, html_text):
-    ignored_ext = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js", ".woff", ".ttf")
-    cleaned_html = html_text.replace("[at]", "@").replace("(at)", "@").replace(" [at] ", "@")
+    ignored_ext = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js")
+    cleaned_html = html_text.replace("[at]", "@").replace("(at)", "@")
     raw_emails = set(re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", cleaned_html))
 
     for a in soup.find_all("a", href=True):
@@ -145,44 +76,32 @@ def extract_emails_from_site(target_url, soup, html_text):
         return [
             e.lower().strip(".") for e in email_set
             if not e.lower().endswith(ignored_ext)
-            and not any(bad in e.lower() for bad in ["example.com", "sentry", "wixpress", "wordpress", "domain.com", "email.com"])
+            and not any(bad in e.lower() for bad in ["example.com", "sentry", "wixpress", "domain.com"])
         ]
 
     valid = filter_valid(raw_emails)
     if valid:
-        return list(dict.fromkeys(valid))[:3]
+        return list(dict.fromkeys(valid))[:2]
 
     parsed = urllib.parse.urlparse(target_url)
     base_root = f"{parsed.scheme}://{parsed.netloc}"
-    contact_paths = ["/contact", "/contact-us", "/about", "/about-us"]
+    contact_paths = ["/contact", "/contact-us", "/about"]
 
-    for a in soup.find_all("a", href=True):
-        href_low = a["href"].lower()
-        if "contact" in href_low or "about" in href_low or "reach" in href_low:
-            contact_paths.insert(0, a["href"])
-            break
-
-    for path in contact_paths[:2]:
+    for path in contact_paths:
         try:
             c_url = urllib.parse.urljoin(base_root, path)
-            c_resp = requests.get(c_url, headers=HEADERS, timeout=6)
-            c_clean = c_resp.text.replace("[at]", "@").replace("(at)", "@")
+            c_resp = requests.get(c_url, headers=HEADERS, timeout=5)
+            c_clean = c_resp.text.replace("[at]", "@")
             c_emails = set(re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", c_clean))
             valid_c = filter_valid(c_emails)
             if valid_c:
-                return list(dict.fromkeys(valid_c))[:3]
+                return list(dict.fromkeys(valid_c))[:2]
         except Exception:
             continue
 
-    netloc = parsed.netloc.lower().replace("www.", "")
-    if netloc and "." in netloc:
-        return [f"info@{netloc}"]
-
     return []
 
-
 def generate_pitch_and_package(url, category, city):
-    """Processes a single URL, extracts emails, and generates the pitch."""
     try:
         if not url.startswith("http"):
             url = "https://" + url
@@ -195,7 +114,7 @@ def generate_pitch_and_package(url, category, city):
         soup = BeautifulSoup(resp.text, "html.parser")
 
         if any(widget in html_lower for widget in CHAT_WIDGET_SCRIPTS):
-            return None # Skip, they already have chat
+            return None
 
         valid_emails = extract_emails_from_site(url, soup, resp.text)
         if not valid_emails:
@@ -232,31 +151,29 @@ def generate_pitch_and_package(url, category, city):
         return None
 
 def hunt_direct_urls(category, city, raw_urls_text):
-    """Takes user-pasted URLs and processes them directly."""
     init_outreach_table()
     urls = [u.strip() for u in raw_urls_text.replace(",", "\n").split("\n") if u.strip()]
     hot_leads = []
-    
     for url in urls:
         lead = generate_pitch_and_package(url, category, city)
         if lead:
             hot_leads.append(lead)
-            
     return hot_leads
 
 def hunt_support_leads(category, city):
-    """The automated search engine crawler."""
+    """The fully automated engine using the new discovery_engine file."""
     init_outreach_table()
-    urls = get_business_urls(category, city)
+    
+    # Let discovery_engine do the deep thinking and IP-block bypassing
+    urls = discovery_engine.deep_discover_urls(category, city)
+    
     hot_leads = []
-
     for url in urls:
         lead = generate_pitch_and_package(url, category, city)
         if lead:
             hot_leads.append(lead)
 
     return hot_leads
-
 
 def send_automated_email(business_name, url, target_email, subject, body):
     init_outreach_table()
@@ -264,10 +181,10 @@ def send_automated_email(business_name, url, target_email, subject, body):
 
     sent_today = get_today_sent_count()
     if sent_today >= DAILY_EMAIL_LIMIT:
-        return False, f"Daily limit reached ({DAILY_EMAIL_LIMIT}/{DAILY_EMAIL_LIMIT} emails sent today). Try again tomorrow!"
+        return False, f"Daily limit reached ({DAILY_EMAIL_LIMIT}/{DAILY_EMAIL_LIMIT} emails sent today)."
 
     if is_already_contacted(target_email):
-        return False, f"Already sent an email to {target_email} previously."
+        return False, "Already sent an email to this address previously."
 
     password = os.environ.get("GMAIL_APP_PASSWORD", "").strip().replace(" ", "")
     if not password:
