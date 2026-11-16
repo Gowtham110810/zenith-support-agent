@@ -86,7 +86,6 @@ def is_valid_business_url(url):
 
 
 def decode_bing_url(href):
-    """Decodes Bing tracking redirect links into direct business URLs."""
     if "bing.com/ck/a" in href and "u=" in href:
         try:
             u_param = urllib.parse.parse_qs(urllib.parse.urlparse(href).query).get("u", [""])[0]
@@ -100,7 +99,6 @@ def decode_bing_url(href):
 
 
 def get_business_urls(category, city):
-    """Multi-engine scraper (Bing + DuckDuckGo Lite + DuckDuckGo HTML) with no URL cap."""
     candidates = []
     seen_domains = set()
 
@@ -118,7 +116,6 @@ def get_business_urls(category, city):
         f'best {category} in {city} official website'
     ]
 
-    # 1. Bing Web Search (Rarely blocks Streamlit Cloud IPs)
     for q in queries:
         try:
             b_url = f"https://www.bing.com/search?q={urllib.parse.quote(q)}&count=30"
@@ -131,24 +128,10 @@ def get_business_urls(category, city):
         except Exception:
             continue
 
-    # 2. DuckDuckGo Lite & HTML Search
-    for q in queries[:2]:
-        try:
-            d_url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(q)}"
-            resp = requests.get(d_url, headers=HEADERS, timeout=10)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            for a in soup.find_all("a", href=True):
-                raw_href = a["href"]
-                target = urllib.parse.parse_qs(urllib.parse.urlparse(raw_href).query).get("uddg", [raw_href])[0]
-                add_url(target)
-        except Exception:
-            continue
-
     return candidates
 
 
 def extract_emails_from_site(target_url, soup, html_text):
-    """Extracts public emails from the landed page, homepage, and /contact page."""
     ignored_ext = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js", ".woff", ".ttf")
     cleaned_html = html_text.replace("[at]", "@").replace("(at)", "@").replace(" [at] ", "@")
     raw_emails = set(re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", cleaned_html))
@@ -169,7 +152,6 @@ def extract_emails_from_site(target_url, soup, html_text):
     if valid:
         return list(dict.fromkeys(valid))[:3]
 
-    # Check /contact or /about links on the same domain
     parsed = urllib.parse.urlparse(target_url)
     base_root = f"{parsed.scheme}://{parsed.netloc}"
     contact_paths = ["/contact", "/contact-us", "/about", "/about-us"]
@@ -192,7 +174,6 @@ def extract_emails_from_site(target_url, soup, html_text):
         except Exception:
             continue
 
-    # Fallback: If the business website is live and valid but hides its email behind JS, use info@domain
     netloc = parsed.netloc.lower().replace("www.", "")
     if netloc and "." in netloc:
         return [f"info@{netloc}"]
@@ -200,64 +181,84 @@ def extract_emails_from_site(target_url, soup, html_text):
     return []
 
 
+def generate_pitch_and_package(url, category, city):
+    """Processes a single URL, extracts emails, and generates the pitch."""
+    try:
+        if not url.startswith("http"):
+            url = "https://" + url
+
+        resp = requests.get(url, headers=HEADERS, timeout=8)
+        if resp.status_code >= 400:
+            return None
+
+        html_lower = resp.text.lower()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        if any(widget in html_lower for widget in CHAT_WIDGET_SCRIPTS):
+            return None # Skip, they already have chat
+
+        valid_emails = extract_emails_from_site(url, soup, resp.text)
+        if not valid_emails:
+            return None
+
+        primary_email = valid_emails[0].lower().strip()
+        if is_already_contacted(primary_email):
+            return None
+
+        parsed = urllib.parse.urlparse(url)
+        clean_domain = f"{parsed.scheme}://{parsed.netloc}"
+        title_tag = soup.find("title")
+        business_name = (
+            title_tag.get_text(strip=True).split("|")[0].split("-")[0].strip()[:50]
+            if title_tag and title_tag.get_text(strip=True)
+            else parsed.netloc.replace("www.", "")
+        )
+
+        pitch = (
+            f"Hi {business_name} Team,\n\n"
+            f"I visited your website ({clean_domain}) and noticed you don't currently have a 24/7 AI support assistant to answer customer questions instantly. "
+            f"I built a custom AI Support Agent for {category} in {city} that answers common questions strictly from your own FAQs and escalates complex inquiries to your staff.\n\n"
+            f"You can test my live working demo right here: {DEMO_URL}\n\n"
+            f"Best regards,\nGowtham | Zenith AI\n{SENDER_EMAIL}"
+        )
+
+        return {
+            "business_name": business_name,
+            "url": clean_domain,
+            "emails": valid_emails,
+            "pitch": pitch
+        }
+    except Exception:
+        return None
+
+def hunt_direct_urls(category, city, raw_urls_text):
+    """Takes user-pasted URLs and processes them directly."""
+    init_outreach_table()
+    urls = [u.strip() for u in raw_urls_text.replace(",", "\n").split("\n") if u.strip()]
+    hot_leads = []
+    
+    for url in urls:
+        lead = generate_pitch_and_package(url, category, city)
+        if lead:
+            hot_leads.append(lead)
+            
+    return hot_leads
+
 def hunt_support_leads(category, city):
-    """Scans all discovered business websites with no lead cap."""
+    """The automated search engine crawler."""
     init_outreach_table()
     urls = get_business_urls(category, city)
     hot_leads = []
 
     for url in urls:
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=8)
-            if resp.status_code >= 400:
-                continue
-
-            html_lower = resp.text.lower()
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # Only skip if an actual chat widget script is embedded
-            if any(widget in html_lower for widget in CHAT_WIDGET_SCRIPTS):
-                continue
-
-            valid_emails = extract_emails_from_site(url, soup, resp.text)
-            if not valid_emails:
-                continue
-
-            primary_email = valid_emails[0].lower().strip()
-            if is_already_contacted(primary_email):
-                continue
-
-            parsed = urllib.parse.urlparse(url)
-            clean_domain = f"{parsed.scheme}://{parsed.netloc}"
-            title_tag = soup.find("title")
-            business_name = (
-                title_tag.get_text(strip=True).split("|")[0].split("-")[0].strip()[:50]
-                if title_tag and title_tag.get_text(strip=True)
-                else parsed.netloc.replace("www.", "")
-            )
-
-            pitch = (
-                f"Hi {business_name} Team,\n\n"
-                f"I visited your website ({clean_domain}) and noticed you don't currently have a 24/7 AI support assistant to answer customer questions instantly. "
-                f"I built a custom AI Support Agent for {category} in {city} that answers common questions strictly from your own FAQs and escalates complex inquiries to your staff.\n\n"
-                f"You can test my live working demo right here: {DEMO_URL}\n\n"
-                f"Best regards,\nGowtham | Zenith AI\n{SENDER_EMAIL}"
-            )
-
-            hot_leads.append({
-                "business_name": business_name,
-                "url": clean_domain,
-                "emails": valid_emails,
-                "pitch": pitch
-            })
-        except Exception:
-            continue
+        lead = generate_pitch_and_package(url, category, city)
+        if lead:
+            hot_leads.append(lead)
 
     return hot_leads
 
 
 def send_automated_email(business_name, url, target_email, subject, body):
-    """Enforces the strict 5-email daily cap while sending via Gmail SMTP."""
     init_outreach_table()
     target_email = target_email.lower().strip()
 
