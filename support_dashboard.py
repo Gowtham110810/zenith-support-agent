@@ -13,13 +13,13 @@ if "hunted_leads" not in st.session_state:
     st.session_state.hunted_leads = []
 
 st.title("🎧 AI Customer Support & B2B Lead Hunter")
-st.caption("Rank 1 B2B Automation: Auto-discover local businesses and auto-send up to 5 pitches per day.")
+st.caption("Rank 1 B2B Automation: Unlimited lead discovery with a safe 5-email/day sending cap.")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "💬 Customer Chat Portal",
     "📚 Knowledge Base Upload",
     "🚨 Escalation Desk",
-    "🎯 Auto-Lead Hunter (5/Day Cap)"
+    "🎯 Auto-Lead Hunter (Unlimited Scan / 5 Send Cap)"
 ])
 
 # --- TAB 1: CUSTOMER FACING ---
@@ -68,42 +68,43 @@ with tab3:
     else:
         st.info("No customer tickets logged yet.")
 
-# --- TAB 4: AUTO LEAD HUNTER & SENDER ---
+# --- TAB 4: UNLIMITED LEAD HUNTER + 5/DAY SENDER ---
 with tab4:
-    st.subheader("Automated Client Discovery & Outreach (zenith.ai.gowtham@gmail.com)")
+    st.subheader("Unlimited Client Discovery & Automated Outreach (zenith.ai.gowtham@gmail.com)")
 
     sent_today = lead_hunter.get_today_sent_count()
     remaining_quota = max(0, lead_hunter.DAILY_EMAIL_LIMIT - sent_today)
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Daily Limit", f"{lead_hunter.DAILY_EMAIL_LIMIT} Emails / Day")
+    m1.metric("Daily Sending Limit", f"{lead_hunter.DAILY_EMAIL_LIMIT} Emails / Day")
     m2.metric("Sent Today", sent_today)
-    m3.metric("Remaining Today", remaining_quota)
+    m3.metric("Remaining Quota Today", remaining_quota)
 
     with st.form("hunt_form"):
-        col1, col2, col3 = st.columns([2, 2, 1])
+        col1, col2 = st.columns(2)
         category = col1.text_input("Business Niche", value="Dental Clinics")
         city = col2.text_input("Target City", value="Hyderabad")
-        max_scan = col3.number_input("Leads to Find", min_value=1, max_value=5, value=5)
-        hunt_btn = st.form_submit_button("🔍 Step 1: Find Clients")
+        hunt_btn = st.form_submit_button("🔍 Step 1: Find All Available Clients (No Scan Limit)")
 
     if hunt_btn:
-        with st.spinner(f"Scanning {category} in {city} without chat widgets..."):
-            st.session_state.hunted_leads = lead_hunter.hunt_support_leads(category, city, int(max_scan))
+        with st.spinner(f"Scanning Bing & DuckDuckGo for all {category} in {city}..."):
+            st.session_state.hunted_leads = lead_hunter.hunt_support_leads(category, city)
         if not st.session_state.hunted_leads:
-            st.warning("No new uncontacted leads found in that scan. Try another niche or city!")
+            st.warning("Search engines returned no reachable sites on that query. Try a broader term like 'Clinics' or 'Hospitals'.")
 
     leads = st.session_state.hunted_leads
     if leads:
-        st.success(f"Loaded {len(leads)} uncontacted lead(s) ready for outreach.")
+        st.success(f"Found {len(leads)} business lead(s)! You can auto-send up to {remaining_quota} more email(s) today.")
 
         if remaining_quota > 0:
-            if st.button(f"⚡ Auto-Send All ({min(len(leads), remaining_quota)} Emails Within Daily Cap)"):
+            if st.button(f"⚡ Auto-Send Top {min(len(leads), remaining_quota)} Emails Now"):
                 for idx, lead in enumerate(leads):
                     if lead_hunter.get_today_sent_count() >= lead_hunter.DAILY_EMAIL_LIMIT:
                         st.warning("Reached 5/5 daily email limit! Stopping batch.")
                         break
                     target_email = lead["emails"][0]
+                    if lead_hunter.is_already_contacted(target_email):
+                        continue
                     subject = f"24/7 AI Support Assistant for {lead['business_name']}"
                     pitch_text = st.session_state.get(f"pitch_{idx}", lead["pitch"])
                     ok, msg = lead_hunter.send_automated_email(
@@ -115,16 +116,16 @@ with tab4:
                         st.error(f"❌ {target_email}: {msg}")
                 st.rerun()
         else:
-            st.warning("🔒 Daily limit of 5 automated emails reached. Outreach will unlock tomorrow.")
+            st.warning("🔒 Daily limit of 5 automated emails reached. You can still browse leads or send manually via Gmail.")
 
         for idx, lead in enumerate(leads):
             target_email = lead["emails"][0]
             already_sent = lead_hunter.is_already_contacted(target_email)
             status_badge = "✅ SENT" if already_sent else "🟢 READY"
 
-            with st.expander(f"{status_badge} | {lead['business_name']} ({lead['url']})", expanded=not already_sent):
+            with st.expander(f"{status_badge} | #{idx+1}: {lead['business_name']} ({lead['url']})", expanded=(idx < 5 and not already_sent)):
                 st.write(f"**Target Email:** `{target_email}`")
-                pitch = st.text_area("Generated Pitch:", value=lead["pitch"], height=150, key=f"pitch_{idx}")
+                pitch = st.text_area("Pitch:", value=lead["pitch"], height=150, key=f"pitch_{idx}")
                 subject = f"24/7 AI Support Assistant for {lead['business_name']}"
 
                 c1, c2 = st.columns(2)
@@ -153,7 +154,7 @@ with tab4:
                     st.markdown(
                         f'<a href="{gmail_url}" target="_blank">'
                         f'<button style="background-color:#334155;color:white;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;">'
-                        f'↗️ Fallback: Open in Gmail Tab'
+                        f'↗️ Open in Gmail Tab'
                         f'</button></a>',
                         unsafe_allow_html=True
                     )
