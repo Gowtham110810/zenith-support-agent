@@ -8,7 +8,6 @@ import lead_hunter
 
 st.set_page_config(page_title="Zenith AI Support Agent", page_icon="🎧", layout="wide")
 central_core.init_databases()
-lead_hunter.init_outreach_table()
 
 if "hunted_leads" not in st.session_state:
     st.session_state.hunted_leads = []
@@ -98,7 +97,6 @@ with tab4:
     if leads:
         st.success(f"Loaded {len(leads)} uncontacted lead(s) ready for outreach.")
 
-        # 1-Click Batch Auto-Send Button (Respects 5/day limit)
         if remaining_quota > 0:
             if st.button(f"⚡ Auto-Send All ({min(len(leads), remaining_quota)} Emails Within Daily Cap)"):
                 for idx, lead in enumerate(leads):
@@ -119,7 +117,6 @@ with tab4:
         else:
             st.warning("🔒 Daily limit of 5 automated emails reached. Outreach will unlock tomorrow.")
 
-        # Individual Lead Cards
         for idx, lead in enumerate(leads):
             target_email = lead["emails"][0]
             already_sent = lead_hunter.is_already_contacted(target_email)
