@@ -19,7 +19,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "💬 Customer Chat Portal",
     "📚 Knowledge Base Upload",
     "🚨 Escalation Desk",
-    "🎯 Auto-Lead Hunter (Unlimited Scan / 5 Send Cap)"
+    "🎯 Auto-Lead Hunter"
 ])
 
 # --- TAB 1: CUSTOMER FACING ---
@@ -70,7 +70,7 @@ with tab3:
 
 # --- TAB 4: UNLIMITED LEAD HUNTER + 5/DAY SENDER ---
 with tab4:
-    st.subheader("Unlimited Client Discovery & Automated Outreach (zenith.ai.gowtham@gmail.com)")
+    st.subheader("Client Discovery & Automated Outreach (zenith.ai.gowtham@gmail.com)")
 
     sent_today = lead_hunter.get_today_sent_count()
     remaining_quota = max(0, lead_hunter.DAILY_EMAIL_LIMIT - sent_today)
@@ -80,24 +80,46 @@ with tab4:
     m2.metric("Sent Today", sent_today)
     m3.metric("Remaining Quota Today", remaining_quota)
 
-    with st.form("hunt_form"):
-        col1, col2 = st.columns(2)
-        category = col1.text_input("Business Niche", value="Dental Clinics")
-        city = col2.text_input("Target City", value="Hyderabad")
-        hunt_btn = st.form_submit_button("🔍 Step 1: Find All Available Clients (No Scan Limit)")
+    st.divider()
+    
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.markdown("### Method A: Search Engine Auto-Scan")
+        st.caption("Let the server scan DuckDuckGo/Bing. (Can be blocked by search engines).")
+        with st.form("hunt_form_auto"):
+            category_a = st.text_input("Business Niche", value="Dental Clinics")
+            city_a = st.text_input("Target City", value="Hyderabad")
+            hunt_btn_auto = st.form_submit_button("🔍 Auto-Scan for Clients")
+            
+        if hunt_btn_auto:
+            with st.spinner(f"Scanning search engines for {category_a} in {city_a}..."):
+                st.session_state.hunted_leads = lead_hunter.hunt_support_leads(category_a, city_a)
+            if not st.session_state.hunted_leads:
+                st.warning("Search engines blocked the request or returned no valid emails. Use Method B!")
 
-    if hunt_btn:
-        with st.spinner(f"Scanning Bing & DuckDuckGo for all {category} in {city}..."):
-            st.session_state.hunted_leads = lead_hunter.hunt_support_leads(category, city)
-        if not st.session_state.hunted_leads:
-            st.warning("Search engines returned no reachable sites on that query. Try a broader term like 'Clinics' or 'Hospitals'.")
+    with col_b:
+        st.markdown("### Method B: Direct URL Injector (Bulletproof)")
+        st.caption("Paste website URLs directly from Google Maps. Bypasses search blocks completely.")
+        with st.form("hunt_form_direct"):
+            category_b = st.text_input("Business Niche", value="Dental Clinics", key="cat_b")
+            city_b = st.text_input("Target City", value="Hyderabad", key="city_b")
+            raw_urls = st.text_area("Paste Website URLs (One per line)", placeholder="https://clinic1.com\nhttps://clinic2.in")
+            hunt_btn_direct = st.form_submit_button("⚡ Extract Emails & Generate Pitches")
+            
+        if hunt_btn_direct and raw_urls:
+            with st.spinner("Crawling pasted URLs to extract emails..."):
+                st.session_state.hunted_leads = lead_hunter.hunt_direct_urls(category_b, city_b, raw_urls)
+            if not st.session_state.hunted_leads:
+                st.warning("Could not extract any valid public emails from the URLs provided.")
 
     leads = st.session_state.hunted_leads
     if leads:
-        st.success(f"Found {len(leads)} business lead(s)! You can auto-send up to {remaining_quota} more email(s) today.")
+        st.divider()
+        st.success(f"Successfully processed {len(leads)} business lead(s)! You can auto-send up to {remaining_quota} more email(s) today.")
 
         if remaining_quota > 0:
-            if st.button(f"⚡ Auto-Send Top {min(len(leads), remaining_quota)} Emails Now"):
+            if st.button(f"🚀 Auto-Send Top {min(len(leads), remaining_quota)} Emails Now"):
                 for idx, lead in enumerate(leads):
                     if lead_hunter.get_today_sent_count() >= lead_hunter.DAILY_EMAIL_LIMIT:
                         st.warning("Reached 5/5 daily email limit! Stopping batch.")
